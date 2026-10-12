@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Zero-G Platformer - Tam Sürüm</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+    <style>
+        body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #050508; }
+        canvas { border: 2px solid #ffcc00; box-shadow: 0 0 30px rgba(255, 204, 0, 0.4); border-radius: 8px; } 
+    </style>
+</head>
+<body>
+    <script>
+        // --- 1. GLOBAL DEĞİŞKENLER VE VERİTABANI ---
+        let db;
+        let globalState = { lives: 3, score: 0 }; 
+        
+        initSqlJs({ locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}` }).then(function(SQL){
+            db = new SQL.Database();
+            db.run("CREATE TABLE Kargolar (id INTEGER PRIMARY KEY, isim TEXT, agirlik INTEGER, toplandi_mi INTEGER)");
+            db.run("CREATE TABLE Skorlar (oyuncu_adi TEXT, skor INTEGER)");
+            db.run("INSERT INTO Kargolar VALUES (1, 'Tıbbi Malzeme', 50, 0), (2, 'Yedek Parça', 30, 0), (3, 'Erzak', 40, 0), (4, 'Yakıt', 60, 0), (5, 'Veri Çekirdeği', 100, 0)");
+            
+            new Phaser.Game(config);
+        });
+
+        // --- 2. GÖRSEL VE DÜŞMAN OLUŞTURUCULAR ---
+        function createPlatform(scene, group, x, y, w, h) {
+            let plat = scene.add.tileSprite(x, y, w, h, 'platform');
+            scene.physics.add.existing(plat, true);
+            group.add(plat);
+            let gfx = scene.add.graphics();
+            let topX = x - w/2, topY = y - h/2;
+            gfx.lineStyle(4, 0x111111, 1); gfx.strokeRect(topX, topY, w, h);
+            gfx.fillStyle(0xffcc00, 1); gfx.fillRect(topX, topY, w, 12);
+            gfx.fillStyle(0x111111, 1); 
+            for(let i = 0; i < w; i += 24) {
+                gfx.beginPath(); gfx.moveTo(topX + i, topY); gfx.lineTo(topX + i + 12, topY);
+                gfx.lineTo(topX + i + 6, topY + 12); gfx.lineTo(topX + i - 6, topY + 12); gfx.fillPath();
+            }
+            gfx.setDepth(1); 
+        }
+
+        function createSciFiDoor(scene, x, y) {
+            let container = scene.add.container(x, y);
+            let frame = scene.add.rectangle(0, 0, 50, 70, 0x333344).setStrokeStyle(4, 0x111111);
+            let inner = scene.add.rectangle(0, 0, 30, 60, 0x00ffaa);
+            let line = scene.add.rectangle(0, 0, 2, 60, 0x111111);
+            let txt = scene.add.text(-20, -50, 'EXIT', { fontSize: '16px', fill: '#00ffaa', fontFamily: 'monospace', fontStyle: 'bold' });
+            container.add([frame, inner, line, txt]);
+            scene.physics.add.existing(container, true);
+            container.body.setSize(50, 70); container.setAlpha(0);
+            scene.tweens.add({ targets: inner, alpha: 0.4, yoyo: true, repeat: -1, duration: 600 });
+            return container;
+        }
+
+        function createAlienDrone(scene, x, y, endX, speed) {
+            let container = scene.add.container(x, y);
+            let aura = scene.add.circle(0, 0, 18, 0xaa00ff, 0.4);
+            let core = scene.add.circle(0, 0, 12, 0x222222).setStrokeStyle(2, 0xaa00ff);
+            let eye = scene.add.circle(0, 0, 5, 0xff0000);
+            container.add([aura, core, eye]);
+            scene.physics.add.existing(container, false);
+            container.body.setAllowGravity(false); container.body.setCircle(15, -15, -15);
+            scene.tweens.add({ targets: container, x: endX, yoyo: true, repeat: -1, duration: speed, ease: 'Sine.easeInOut' });
+            scene.tweens.add({ targets: aura, scale: 1.3, alpha: 0.1, yoyo: true, repeat: -1, duration: 200 });
+            return container;
+        }
+
+        function createBossAlien(scene, x, y) {
+            let container = scene.add.container(x, y);
+            let aura = scene.add.circle(0, 0, 45, 0xff0000, 0.5);
+            let core = scene.add.circle(0, 0, 30, 0x111111).setStrokeStyle(4, 0xff0000);
+            let eye1 = scene.add.circle(-10, -5, 6, 0xffcc00);
+            let eye2 = scene.add.circle(10, -5, 6, 0xffcc00);
+            container.add([aura, core, eye1, eye2]);
+            scene.physics.add.existing(container, false);
+            container.body.setAllowGravity(false); container.body.setCircle(35, -35, -35);
+            scene.tweens.add({ targets: aura, scale: 1.2, alpha: 0.2, yoyo: true, repeat: -1, duration: 150 });
+            return container;
+        }
+
+        // --- 3. TEMEL SAHNE YAPISI (KALITIM) ---
+        class BaseLevel extends Phaser.Scene {
+            preload() {
+                this.load.spritesheet('astronaut', 'assets/player/idle_walk(64,64).png', { frameWidth: 64, frameHeight: 64 });
+                this.load.image('platform', 'assets/tiles/platform.png');
+                this.load.image('box', 'assets/tiles/box.png');
+            }
+
+            initLevel(bgColor, totalCargo, nextSceneKey) {
+                this.cameras.main.setBackgroundColor(bgColor);
+                for (let i=0; i<120; i++) this.add.circle(Phaser.Math.Between(0,800), Phaser.Math.Between(0,600), 1, 0xffffff, Math.random() * 0.4);
+                this.platforms = this.physics.add.staticGroup();
+                this.cargos = this.physics.add.group();
+                this.hazards = []; 
+                this.totalCargo = totalCargo;
+                this.collectedCount = 0;
+                this.nextScene = nextSceneKey;
+                this.levelStartScore = globalState.score; 
+            }
+
+            setupPlayer(startX, startY) {
+                this.playerStartX = startX;
+                this.playerStartY = startY;
+
+                this.player = this.physics.add.sprite(startX, startY, 'astronaut');
+                this.player.setCollideWorldBounds(true);
+                this.player.body.setSize(24, 40); this.player.body.setOffset(20, 24); this.player.setDepth(2);
+                if (!this.anims.exists('walk')) {
+                    this.anims.create({ key: 'walk', frames: this.anims.generateFrameNumbers('astronaut', { start: 0, end: 15 }), frameRate: 20, repeat: -1 });
+                    this.anims.create({ key: 'idle', frames: [ { key: 'astronaut', frame: 0 } ], frameRate: 20 });
+                }
+                this.physics.add.collider(this.player, this.platforms);
+                this.physics.add.collider(this.cargos, this.platforms);
+                this.physics.add.overlap(this.player, this.cargos, this.collectCargo, null, this);
+                this.physics.add.overlap(this.player, this.exitDoor, this.reachExit, null, this);
+                
+                this.cursors = this.input.keyboard.createCursorKeys();
+                this.updateHUD();
+            }
+
+            addHazard(hazardObj) {
+                this.hazards.push(hazardObj);
+                this.physics.add.overlap(this.player, hazardObj, this.takeDamage, null, this);
+            }
+
+            update() {
+                if (!this.player.active) return;
+                
+                if (this.cursors.left.isDown) { this.player.setVelocityX(-220); this.player.anims.play('walk', true); this.player.flipX = true; }
+                else if (this.cursors.right.isDown) { this.player.setVelocityX(220); this.player.anims.play('walk', true); this.player.flipX = false; }
+                else { this.player.setVelocityX(0); this.player.anims.play('idle'); }
+
+                // YENİ: ASTRONOT JETPACK'İ (Havada Sınırsız Zıplama)
+                // Yere basma şartı kalktı. Tuşa her basıldığında roket itişi yapar
+                if (Phaser.Input.Keyboard.JustDown(this.cursors.up)) { 
+                    this.player.setVelocityY(-450); 
+                }
+
+                if (this.boss && this.player.active) {
+                    this.physics.moveToObject(this.boss, this.player, 95); 
+                }
+            }
+
+            updateHUD() {
+                let displayCargo = this.totalCargo === 0 ? 'KAÇ!' : this.totalCargo;
+                let displayCount = this.totalCargo === 0 ? 'BOSS' : this.collectedCount;
+                this.game.events.emit('updateUI', { lives: globalState.lives, score: globalState.score, cargoCount: displayCount, cargoTotal: displayCargo });
+            }
+
+            collectCargo(player, cargo) {
+                cargo.destroy();
+                db.run("UPDATE Kargolar SET toplandi_mi = 1 WHERE id = ?", [Phaser.Math.Between(1,5)]);
+                globalState.score += cargo.agirlik;
+                this.collectedCount++;
+                this.updateHUD();
+                if (this.collectedCount === this.totalCargo) this.exitDoor.setAlpha(1); 
+            }
+
+            takeDamage() {
+                if (globalState.lives <= 0) return;
+                globalState.lives--;
+                this.updateHUD();
+
+                if (globalState.lives <= 0) {
+                    this.player.setTint(0xff0000); this.player.active = false; this.physics.pause();
+                    setTimeout(() => {
+                        alert("CANIN BİTTİ! Ama pes etmek yok. Bu bölüme tekrar başlıyorsun.");
+                        globalState.lives = 3; 
+                        globalState.score = this.levelStartScore; 
+                        this.scene.restart();
+                    }, 200);
+                } else {
+                    this.player.setPosition(this.playerStartX, this.playerStartY); 
+                    this.player.setVelocity(0,0);
+                    if (this.boss) this.boss.setPosition(400, 50); 
+                }
+            }
+
+            reachExit() {
+                if (this.collectedCount === this.totalCargo) {
+                    if (this.nextScene === 'WIN') {
+                        this.player.active = false; this.physics.pause();
+                        db.run("INSERT INTO Skorlar VALUES (?, ?)", ['DİJLE', globalState.score]);
+                        let res = db.exec("SELECT * FROM Skorlar ORDER BY skor DESC LIMIT 5");
+                        console.table(res[0].values);
+                        alert("MUAZZAM BAŞARI!\nUzaylıdan kaçtın ve istasyonu kurtardın.\nToplam Skor: " + globalState.score + "\nLiderlik Tablosu (F12) Konsolda!");
+                    } else {
+                        this.scene.start(this.nextScene);
+                    }
+                }
+            }
+        }
+
+        // --- 4. BÖLÜM TASARIMLARI ---
+
+        class Level1 extends BaseLevel {
+            constructor() { super('Level1'); }
+            create() {
+                this.initLevel('#2B2B36', 3, 'Level2');
+                createPlatform(this, this.platforms, 400, 580, 800, 60); 
+                createPlatform(this, this.platforms, 200, 420, 200, 40);
+                createPlatform(this, this.platforms, 600, 320, 200, 40);
+                createPlatform(this, this.platforms, 350, 180, 150, 40);
+                
+                let c1 = this.cargos.create(200, 360, 'box'); c1.agirlik = 50;
+                let c2 = this.cargos.create(600, 260, 'box'); c2.agirlik = 30;
+                let c3 = this.cargos.create(350, 120, 'box'); c3.agirlik = 40;
+
+                this.exitDoor = createSciFiDoor(this, 750, 515);
+                this.setupPlayer(50, 450);
+                
+                let laser = this.add.rectangle(400, 530, 300, 8, 0xff0044);
+                this.physics.add.existing(laser, true);
+                this.tweens.add({ targets: laser, alpha: 0.2, yoyo: true, repeat: -1, duration: 300 });
+                this.addHazard(laser);
+            }
+        }
+
+        class Level2 extends BaseLevel {
+            constructor() { super('Level2'); }
+            create() {
+                this.initLevel('#1C1C24', 4, 'Level3');
+                createPlatform(this, this.platforms, 400, 580, 800, 60); 
+                createPlatform(this, this.platforms, 150, 420, 150, 40);
+                createPlatform(this, this.platforms, 450, 320, 200, 40);
+                createPlatform(this, this.platforms, 700, 200, 150, 40);
+
+                let c1 = this.cargos.create(450, 260, 'box'); c1.agirlik = 60;
+                let c2 = this.cargos.create(700, 140, 'box'); c2.agirlik = 40;
+                let c3 = this.cargos.create(150, 360, 'box'); c3.agirlik = 50;
+                let c4 = this.cargos.create(750, 510, 'box'); c4.agirlik = 30;
+
+                this.exitDoor = createSciFiDoor(this, 50, 515);
+                this.setupPlayer(400, 450);
+
+                this.addHazard(createAlienDrone(this, 350, 280, 550, 1800));
+                this.addHazard(createAlienDrone(this, 750, 490, 200, 2500));
+            }
+        }
+
+        class Level3 extends BaseLevel {
+            constructor() { super('Level3'); }
+            create() {
+                this.initLevel('#151520', 5, 'Level4'); 
+                
+                // YENİ: LEVEL 3 İÇİN ZEMİN SINIRINI KALDIRDIK (Alt taraf gerçek bir boşluk oldu)
+                this.physics.world.setBoundsCollision(true, true, true, false);
+
+                createPlatform(this, this.platforms, 100, 500, 200, 40); 
+                createPlatform(this, this.platforms, 400, 400, 150, 40);
+                createPlatform(this, this.platforms, 700, 300, 200, 40);
+                createPlatform(this, this.platforms, 400, 150, 150, 40);
+                createPlatform(this, this.platforms, 100, 250, 150, 40);
+
+                let c1 = this.cargos.create(400, 340, 'box'); c1.agirlik = 60;
+                let c2 = this.cargos.create(700, 240, 'box'); c2.agirlik = 40;
+                let c3 = this.cargos.create(100, 190, 'box'); c3.agirlik = 70;
+                let c4 = this.cargos.create(400, 90, 'box');  c4.agirlik = 50;
+                let c5 = this.cargos.create(150, 440, 'box'); c5.agirlik = 30;
+
+                this.exitDoor = createSciFiDoor(this, 750, 235);
+                this.setupPlayer(50, 400);
+
+                let movingLaser = this.add.rectangle(400, 580, 300, 8, 0xff0044);
+                this.physics.add.existing(movingLaser, false); movingLaser.body.setAllowGravity(false);
+                this.tweens.add({ targets: movingLaser, y: 450, yoyo: true, repeat: -1, duration: 2000 });
+                this.addHazard(movingLaser);
+                
+                this.addHazard(createAlienDrone(this, 300, 360, 500, 1500));
+                this.addHazard(createAlienDrone(this, 100, 100, 700, 3000));
+            }
+            update() { 
+                super.update(); 
+                // YENİ: Ekranın en altından uzay boşluğuna düşünce can gider!
+                if(this.player.y > 650) {
+                    this.takeDamage(); 
+                } 
+            } 
+        }
+
+        class Level4 extends BaseLevel {
+            constructor() { super('Level4'); }
+            create() {
+                this.initLevel('#201010', 6, 'Level5'); 
+                
+                // Bölüm 4'te tekrar alt sınır kapalı olsun (zemini var çünkü)
+                this.physics.world.setBoundsCollision(true, true, true, true);
+
+                createPlatform(this, this.platforms, 400, 580, 800, 60); 
+                createPlatform(this, this.platforms, 200, 450, 150, 40);
+                createPlatform(this, this.platforms, 600, 450, 150, 40);
+                createPlatform(this, this.platforms, 400, 320, 150, 40);
+                createPlatform(this, this.platforms, 200, 200, 150, 40);
+                createPlatform(this, this.platforms, 600, 200, 150, 40);
+
+                this.cargos.create(200, 390, 'box').agirlik = 50;
+                this.cargos.create(600, 390, 'box').agirlik = 50;
+                this.cargos.create(400, 260, 'box').agirlik = 70;
+                this.cargos.create(200, 140, 'box').agirlik = 60;
+                this.cargos.create(600, 140, 'box').agirlik = 60;
+                this.cargos.create(400, 520, 'box').agirlik = 30;
+
+                this.exitDoor = createSciFiDoor(this, 400, 255);
+                this.setupPlayer(50, 450);
+
+                this.addHazard(createAlienDrone(this, 100, 400, 300, 1500));
+                this.addHazard(createAlienDrone(this, 700, 400, 500, 1500));
+                this.addHazard(createAlienDrone(this, 100, 150, 300, 1800));
+                this.addHazard(createAlienDrone(this, 700, 150, 500, 1800));
+            }
+        }
+
+        class Level5 extends BaseLevel {
+            constructor() { super('Level5'); }
+            create() {
+                this.initLevel('#050000', 0, 'WIN'); 
+                
+                this.physics.world.setBoundsCollision(true, true, true, true);
+
+                createPlatform(this, this.platforms, 400, 580, 800, 60); 
+                createPlatform(this, this.platforms, 200, 450, 150, 40);
+                createPlatform(this, this.platforms, 500, 350, 150, 40);
+                createPlatform(this, this.platforms, 200, 250, 150, 40);
+                createPlatform(this, this.platforms, 600, 150, 150, 40);
+
+                this.exitDoor = createSciFiDoor(this, 750, 115);
+                this.exitDoor.setAlpha(1);
+
+                this.setupPlayer(50, 450);
+
+                this.boss = createBossAlien(this, 400, 50);
+                this.addHazard(this.boss);
+            }
+        }
+
+        // --- 5. ARAYÜZ (UI) SAHNESİ ---
+        class UIScene extends Phaser.Scene {
+            constructor() { super({ key: 'UIScene', active: true }); }
+            create() {
+                this.livesText = this.add.text(16, 16, '', { fontSize: '24px', fill: '#ffcc00', fontFamily: 'monospace', fontStyle: 'bold' });
+                this.scoreText = this.add.text(16, 46, '', { fontSize: '24px', fill: '#ffcc00', fontFamily: 'monospace', fontStyle: 'bold' });
+                this.cargoText = this.add.text(16, 76, '', { fontSize: '24px', fill: '#ffcc00', fontFamily: 'monospace', fontStyle: 'bold' });
+                this.game.events.on('updateUI', this.updateUI, this);
+            }
+            updateUI(data) {
+                this.livesText.setText('LIVES: ' + data.lives);
+                this.scoreText.setText('SCORE: ' + data.score);
+                this.cargoText.setText('CARGO: ' + data.cargoCount + '/' + data.cargoTotal);
+            }
+        }
+
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            pixelArt: true,
+            physics: { default: 'arcade', arcade: { gravity: { y: 500 }, debug: false } },
+            scene: [Level1, Level2, Level3, Level4, Level5, UIScene] 
+        };
+    </script>
+</body>
+</html>
