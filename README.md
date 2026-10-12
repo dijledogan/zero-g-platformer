@@ -29,11 +29,3 @@ zero-g-platformer/
 │   ├── player/          # Astronot karakterine ait sprite sheet ve animasyon kareleri
 │   └── tiles/           # Platform, lazer, kargo kutuları ve arka plan dokuları
 └── index.html           # Oyun döngüsü (Game Loop), sahneler ve veritabanı konfigürasyonu
-
-##  Kurulum ve Çalıştırma
-
-Oyun tamamen tarayıcı tabanlı çalıştığı için karmaşık bir sunucu kurulumuna ihtiyaç duymaz.
-
-1. Repoyu bilgisayarınıza klonlayın:
-   ```bash
-   git clone [https://github.com/dijledogan/zero-g-platformer.git](https://github.com/dijledogan/zero-g-platformer.git)
