@@ -1,8 +1,10 @@
-# Zero-G Platformer 
+# Zero-G Platformer 🚀
+
+🎮 https://dijledogan.github.io/zero-g-platformer/ 
 
 Zero-G Platformer, Phaser 3 oyun motoru ve JavaScript kullanılarak geliştirilmiş, yerçekimsiz ortam fizikleri barındıran 2D retro bir bilimkurgu platform oyunudur. Proje, dinamik sahne yönetimi (Scene Management) ve `sql.js` entegrasyonu ile yerel veritabanı üzerinden skor/kargo takibi yapacak şekilde tasarlanmıştır.
 
-##  Özellikler
+## 🎮 Özellikler
 
 * **Fizik Tabanlı Hareket (Jetpack Mekaniği):** Karakterin yerçekimsiz uzay ortamında süzülmesini sağlayan, Phaser Arcade Physics motoruyla desteklenmiş jetpack itiş sistemi.
 * **Nesne Yönelimli Sahne Mimarisi (OOP):** 5 farklı zorluk seviyesi, temel bir `BaseLevel` sınıfından kalıtım (inheritance) alınarak inşa edilmiştir. Bu sayede kod tekrarı önlenmiş ve modüler bir yapı kurulmuştur.
@@ -12,7 +14,7 @@ Zero-G Platformer, Phaser 3 oyun motoru ve JavaScript kullanılarak geliştirilm
 * **Yerleşik Veritabanı (SQL.js):** Oyuncunun topladığı kargolar ve anlık skorları tarayıcı belleğinde oluşturulan SQLite veritabanında (`Kargolar` ve `Skorlar` tabloları) tutulur ve oyun bitiminde konsola liderlik tablosu olarak yazdırılır.
 * **Durum Koruma (Checkpoint):** Karakter hasar aldığında tüm oyunu sıfırlamak yerine, global state üzerinden güncel skor ve can verisi korunarak sadece bulunulan bölüm baştan başlatılır.
 
-##  Teknolojiler ve Araçlar
+## 🛠 Teknolojiler ve Araçlar
 
 * **Dil:** HTML5, CSS3, JavaScript (ES6+)
 * **Oyun Motoru:** Phaser 3 (v3.55.2)
